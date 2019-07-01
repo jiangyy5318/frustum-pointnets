@@ -297,11 +297,20 @@ def get_loss(mask_label, center_label, \
             the total_loss is also added to the losses collection
     '''
     # 3D Segmentation loss
+    # L_{Seg}:logits, end_points = get_instance_seg_v1_net(point_cloud, one_hot_vec,is_training, bn_decay, end_points)
+    # end_points['mask_logits'] = logits;BxNxC
+    # mask_label:BxN
     mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
         logits=end_points['mask_logits'], labels=mask_label))
     tf.summary.scalar('3d mask loss', mask_loss)
 
     # Center regression losses
+    # output = tf_util.fully_connected(net,3+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4, activation_fn=None, scope='fc3')
+    # output shape: B,3+2*NUM_HEADING_BIN+4*NUM_SIZE_CLUSTER
+    # end_points['center'] 通过center = tf.slice(output, [0,0], [-1,3]) 去[:,0:3]部分;
+    # end_points['center']: B * 3
+    # center_label: shape B*3 centers_pl = tf.placeholder(tf.float32, shape=(batch_size, 3))
+    # L_{c1-reg}和L_{c2-reg}分别指 对于center_label的回归和stage1_center的回归
     center_dist = tf.norm(center_label - end_points['center'], axis=-1)
     center_loss = huber_loss(center_dist, delta=2.0)
     tf.summary.scalar('center loss', center_loss)
@@ -310,12 +319,16 @@ def get_loss(mask_label, center_label, \
     stage1_center_loss = huber_loss(stage1_center_dist, delta=1.0)
     tf.summary.scalar('stage1 center loss', stage1_center_loss)
 
-    # Heading loss
+    # Heading loss:(h-cls)
+    # heading_scores = tf.slice(output, [0,3], [-1,NUM_HEADING_BIN]) (B,NUM_HEADING_BIN)
+    # heading_class_label_pl = tf.placeholder(tf.int32, shape=(batch_size,))
     heading_class_loss = tf.reduce_mean( \
         tf.nn.sparse_softmax_cross_entropy_with_logits( \
         logits=end_points['heading_scores'], labels=heading_class_label))
     tf.summary.scalar('heading class loss', heading_class_loss)
 
+    # heading_residual_normalized_loss:(h-reg)
+    # heading_residual_label:(B,),感觉有点模糊
     hcls_onehot = tf.one_hot(heading_class_label,
         depth=NUM_HEADING_BIN,
         on_value=1, off_value=0, axis=-1) # BxNUM_HEADING_BIN
@@ -327,7 +340,8 @@ def get_loss(mask_label, center_label, \
     tf.summary.scalar('heading residual normalized loss',
         heading_residual_normalized_loss)
 
-    # Size loss
+    # Size loss:L_{s-cls},L_{s-reg}
+    # end_points['size_scores'],(B,)
     size_class_loss = tf.reduce_mean( \
         tf.nn.sparse_softmax_cross_entropy_with_logits( \
         logits=end_points['size_scores'], labels=size_class_label))
